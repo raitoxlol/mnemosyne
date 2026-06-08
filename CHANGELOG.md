@@ -5,22 +5,188 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [SemVer](https://semver.org/) starting from v3.1.2.
 
-## [3.4.0] — 2026-06-01
+## [3.4.0] — 2026-06-08
 
 ### Added
 
-- **Known dimensions for local SentenceTransformers multilingual models.**
-  `paraphrase-multilingual-MiniLM-L12-v2`, `all-MiniLM-L6-v2`, and
-  `paraphrase-multilingual-mpnet-base-v2` are now listed for low-resource
-  local multilingual embedding setups.
+- **LLM model fallback chain for remote summarization.** When
+  `MNEMOSYNE_LLM_BASE_URL` is set, `_call_remote_llm()` now iterates a
+  configurable fallback chain of model names after the primary fails. New
+  env vars: `MNEMOSYNE_LLM_FALLBACK_MODELS` (comma-separated model list),
+  `MNEMOSYNE_LLM_FALLBACK_BASE_URL` (optional endpoint override), and
+  `MNEMOSYNE_LLM_FALLBACK_API_KEY` (optional key override). Auth failures
+  (401/403) and rate limits (429) are NOT retried, only transient errors.
+  (Contributed by **scubamount**, PR #223.)
+
+- **Phase 2 LLM-based episodic conflict resolution.** When two
+  consolidated memories semantically disagree, the conflict detector now
+  asks an LLM to resolve the conflict instead of silently dropping one
+  side. (Contributed by **Ciro Barbato / kirocop**, revived from #211.)
+
+- **Selectable prefetch profiles + pluggable extra sources.** `prefetch()`
+  is now configurable via named profiles (`general` for the exact prior
+  behavior, `social-chat` for recency/importance-weighted) and
+  `register_prefetch_source()` for custom retrieval backends. Profile
+  selection via `MNEMOSYNE_PREFETCH_PROFILE` env var.
+  (Contributed by **Milgauss**, PR #244.)
+
+- **Wider English preference regex.** The preference detection pattern now
+  catches 2nd-person directives ("You prefer Y"), 3rd-person names
+  ("Nathan likes X"), and structural-start forms ("- likes Y",
+  "**Prefers** X") in addition to the original 1st-person-only pattern.
+  (Contributed by **nzperryus-cyber**, PR #242.)
+
+- **PF classification branch in `_classify_ability`.** The ability
+  dispatcher had a 'PF' handler in the read path, but `_classify_ability`
+  never returned 'PF', making preference recall dead code. Now routed
+  correctly between IE and Abstention. (Contributed by **nzperryus-cyber**,
+  PR #241.)
+
+- **Docs generation pipeline.** `scripts/generate-docs.py` extracts tool
+  schemas and config schema from provider code into generated `.mdx`
+  pages. `scripts/verify-docs.py` checks for doc-code drift (CI-ready).
+
+- **All 23 MCP tools now exposed.** The standalone MCP server previously
+  only registered 6 tools. Now exposes the full 23-tool surface matching
+  the Hermes provider: `shared_*`, `stats`, `invalidate`, `validate`,
+  `get`, `scratchpad_clear`, `export`, `update`, `forget`, `import`,
+  `diagnose`, `graph_query`, `graph_link`, plus the corrected
+  `triple_add`/`triple_query`.
+
+- **ProductHunt launch badge** added to README.
 
 ### Fixed
 
-- **Unicode recall tokenization for Latin-script languages.** Recall lexical
-  gates now keep diacritics inside tokens, so words like `Stoßlüften`,
-  `Bürgeramt`, and `Primärquellen` are no longer split into ASCII fragments.
+- **VeracityConsolidator silently broken.** `self.conn` was passed
+  positionally to `VeracityConsolidator`, landing in `db_path` while
+  `conn` stayed `None`. The branch then called
+  `sqlite3.connect(str(connection))`, creating a phantom empty SQLite
+  database named after the connection object's repr. All Source 2
+  (consolidated facts) recall was dead. One-line fix: pass by keyword.
+  (Contributed by **Milgauss**, fixes #229, PR #230.)
 
-## [3.3.0] — 2026-06-01
+- **Pronoun/demonstrative/possessive subjects flooding conflict detector.**
+  `extract_facts()` captured any capitalized "X is Y" as a triple, so
+  (This, is, interesting) and (My report, uses, format) flooded the
+  conflicts table with noise. Added a `_LOW_QUALITY_SUBJECT_LEADERS`
+  stoplist. (Contributed by **Milgauss**, fixes #231, PR #232.)
+
+- **Episodic vector counts lied when sqlite-vec unavailable.** When the
+  running Python can't load sqlite-vec (no loadable extension support),
+  `get_episodic_stats` counted the ANN table (which doesn't exist) and
+  always reported 0 vectors, even though semantic recall was fully
+  functional via binary-vector or float32 JSON embeddings. Now counts
+  whichever representation is populated. (Contributed by **Milgauss**,
+  fixes #235.)
+
+- **Bare single-token extraction fragments dominating recall prefetch.**
+  The regex extractor can emit single-token "facts" (stray adverbs,
+  particles) that FTS-match common query words. Added read-time
+  `_is_low_quality_prefetch` guard with over-fetch + cap.
+  (Contributed by **Milgauss**, PR #243.)
+
+- **Missing capture groups in Russian/Italian/Spanish date regex.**
+  Russian and Italian `named_months` patterns used only non-capturing
+  groups `(?:...)`, leaving zero capture groups. The code unconditionally
+  calls `m.group(1)`, crashing on `IndexError`. Spanish had 3 groups but
+  only group 1 was read. All three languages now have exactly 1 capture
+  group. Added try/except guards around fact extraction so no future regex
+  bug can block memory storage. (Contributed by **Whishp**, PR #228,
+  with follow-up negation pattern fix.)
+
+- **`vec_quantize_int8` normalization bug at high dimensions.**
+  sqlite-vec 0.1.9's `vec_quantize_int8(x, 'unit')` works correctly at
+  384-dim but silently passes through unnormalized vectors at 1024-dim,
+  causing L2 distances of 1400-2750 and collapsing dense search.
+  Pre-normalizing embeddings before quantization works around the bug.
+  (Contributed by **qiniancs**.)
+
+- **UTF-8 corruption crashing sleep maintenance.** Corrupt bytes (0xFE,
+  0xFF) in `episodic_memory` content from LLM output or compression layer
+  caused `OperationalError: Could not decode to UTF-8 column content`,
+  taking down the entire `sleep_all_sessions` pass. Added `_sanitize_utf8()`
+  at all episodic write boundaries + try/except on SELECT queries.
+  (Contributed by **flooryyyy**.)
+
+- **Multilingual tokenization for Latin-script diacritics.** Recall lexical
+  gates now preserve diacritics inside tokens, so words like `Stoßlüften`,
+  `Bürgeramt`, and `Primärquellen` are no longer split into ASCII
+  fragments. (Contributed by **Denis H / dplush**.)
+
+- **`<think>` tags leaking into consolidation output.** Some LLM backends
+  emit `<think>...</think>` reasoning tags that contaminated stored
+  summaries. Now stripped before writing. Default local model upgraded from
+  TinyLlama-1.1B to MiniCPM5-1B. (Contributed by **Carvalab**, PR #221.)
+
+- **Starlette 1.2.1+ compatibility.** Starlette 1.2.1 made `.send` a
+  private attribute (`._send`), breaking SSE transport on the MCP server.
+  Both `connect_sse` and `handle_post_message` updated. (Fixes #219.)
+
+- **`vec[0]` access hardened with `np.asarray()`.** `embeddings.embed()`
+  returns `np.ndarray` in production but test mocks may return plain
+  Python lists. Wrapping with `np.asarray()` prevents
+  `AttributeError: 'list' object has no attribute 'tolist'`.
+
+- **`vec_episodes` insert guarded in try/except.** A failed sqlite-vec
+  insert from corrupt embedding data no longer crashes the calling
+  function. Paired with runtime sqlite_vec extension-load check in
+  `diagnose()`. (Fixes #236, #238.)
+
+- **`_FASTEMBED_AVAILABLE` now a lazy function.** The module-level
+  constant evaluated once at import time. If `sys.path` was polluted
+  (e.g. by the Hermes plugin), `np` and `TextEmbedding` resolved to wrong
+  packages and the flag was stuck `False`. `_is_fastembed_available()`
+  re-evaluates on each call. (Fixes #233 root cause.)
+
+- **Legacy `scripts/install.sh` removed.** Consolidated to pip-only
+  install path. All docs updated to match. (Fixes #208.)
+
+- **Dead `hermes_plugin` tests removed.** 4 test files still imported from
+  the removed `hermes_plugin/` directory, killing the entire test suite
+  with `ModuleNotFoundError`. Deleted.
+
+- **Kirocop fork URLs reverted in pyproject.toml.** Cherry-picking from
+  the fork inadvertently leaked `kirocop/mnemosyne` URLs into the main
+  repo. Reverted to `AxDSan/mnemosyne`.
+
+- **Plugin.yaml versions aligned to 0.1.1.** Both plugin YAML files were
+  stuck at 3.1.0 from the pre-refactor era. The standalone Hermes plugin
+  now has its own `0.1.x` version track.
+
+### Changed
+
+- **LLM completions client refactored.** Simpler interface, automatic retry
+  with exponential backoff, and actual token usage tracking for stats.
+  (Contributed by **Ciro Barbato / kirocop**.)
+
+- **PEP 668 / venv install instructions** added for Debian Trixie and
+  Ubuntu 24.04+ users.
+
+- **Plugin symlink step and Debian PEP 668 note** added to Hermes install
+  guide.
+
+- **Repository metadata** updated across pyproject.toml files.
+
+- **CI: pip caching enabled + heavy LLM deps dropped.** Test installs
+  switched from `[all,dev]` to `[embeddings,mcp,dev]`, dropping
+  llama-cpp-python, ctransformers, and huggingface-hub. Fixes 6-hour CI
+  timeouts on external contributor PRs.
+
+- **CI: mnemosyne-hermes provider installed** for MCP tool tests.
+
+### Docs
+
+- **Tags and scope unification RFC** proposed by **achrllrogia45**
+  (PR #239). Covers tag inheritance, scope boundaries, and a unified
+  `remember(tags=[...])` API.
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [SemVer](https://semver.org/) starting from v3.1.2.
+
+## [Unreleased]
 
 ### Added
 
@@ -29,36 +195,21 @@ and this project adheres to [SemVer](https://semver.org/) starting from v3.1.2.
   Default `["user", "assistant"]` preserves existing behavior. Set to `["user"]`
   to save only user turns, or `[]` to disable conversation autosave while keeping
   explicit `mnemosyne_remember` calls working. Unknown roles are warned and ignored.
-  (Contributed by **bitr8**, closes #209.)
 - **`MNEMOSYNE_SYNC_TURN_USER_LIMIT` / `MNEMOSYNE_SYNC_TURN_ASSISTANT_LIMIT` env vars.**
   `sync_turn()` now respects configurable truncation limits instead of hardcoded
   500/800 slices. Defaults to `500` (user) and `800` (assistant) for backward
   compatibility. Set to `0` to disable truncation.
 - **Fact recall merged into standard `beam.recall()` path.** Set
-  `MNEMOSYNE_FACT_RECALL_ENABLED=1` to merge LLM-extracted facts (from `extract=true`)
-  into recall results. Facts are deduplicated against regular memories by content
-  hash and scored at 0.9x their confidence.
-- **Auto-default `scope=global` when `extract=true`.** If a caller doesn't
-  explicitly pass `scope`, setting `extract=true` now infers `scope=global`
-  instead of the default `session`. Explicit scope overrides are respected.
-- **`fact_recall()` now searches `consolidated_facts`** (sleep-consolidated fact
-  triples) in addition to the raw `facts` table. Previously only accessible
-  through polyphonic recall (`MNEMOSYNE_POLYPHONIC_RECALL=1`). Fact data stored
-  with `extract=true` is now visible through the default recall path.
-- **`MNEMOSYNE_EMBEDDING_API_URL` independent of `OPENROUTER_BASE_URL`.**
-  Embedding models can now use local llama.cpp, OpenAI, Anthropic, or any
-  other provider without requiring OpenRouter configuration. Also fixes a bug
-  where `_OPENAI_BASE_URL` was stale after env read. (Contributed by
-  **mia-fourier**, PR #206.)
+  `MNEMOSYNE_FACT_RECALL_ENABLED=1` to merge LLM-extracted facts into recall
+  results. Facts are deduplicated against regular memories by content hash.
+- **Auto-default `scope=global` when `extract=true`.** If no explicit scope is
+  passed, setting `extract=true` infers `scope=global` instead of `session`.
+- **`fact_recall()` now searches `consolidated_facts`** in addition to the raw
+  `facts` table. Fact data stored with `extract=true` is now visible through
+  the default recall path without requiring polyphonic mode.
 
 ### Fixed
 
-- **`remember()` silently never stored embeddings.** Only `remember_batch()`
-  called `_vec_insert()`. The Hermes provider uses `remember()`, so thousands
-  of working memories had no vectors, making conflict detection always a no-op
-  and degrading vector recall quality. Added `_vec_insert()` call to `remember()`.
-  Threshold for conflict detection relaxed from 0.92 to 0.88 (32 conflicts found
-  vs 23 in real data).
 - **Hardcoded embedding dimension in `binary_vectors.py`.** `EMBEDDING_DIM` was
   hardcoded to 384 (bge-small-en-v1.5), causing `maximally_informative_binarization`
   to silently truncate larger embeddings (e.g. 1024-dim multilingual-e5-large) to
@@ -67,92 +218,8 @@ and this project adheres to [SemVer](https://semver.org/) starting from v3.1.2.
   a 384 fallback when the embeddings module is unavailable. `BYTES_PER_VECTOR`,
   `compression_ratio`, and `theoretical_size_mb` in `get_stats()` are likewise
   computed from the resolved dimension instead of hardcoded constants.
-  (Contributed by **Whishp**, PR #200.)
-- **Same hardcoded 384 in `shmr.py` and `polyphonic_recall.py`.** `shmr.py` used
-  the identical hardcoded constant. `polyphonic_recall.py` hardcoded `384` for
-  bit-type vector normalization, silently breaking for non-384-dim models.
-  Both now derive from `embeddings.EMBEDDING_DIM`. (Contributed by **Whishp**.)
-- **Last hardcoded 384 in `test_integration.py`.** `np.random.randn(384)` on
-  line 238 missed in the earlier pass. Now uses EMBEDDING_DIM like the rest.
-  (Contributed by **Whishp**.)
-- **Plugin directory named `mnemosyne` shadows pip package.** Hermes adds
-  `~/.hermes/plugins/` to `sys.path`, so a symlink named `mnemosyne` resolves
-  before the actual `mnemosyne-memory` pip package, causing `ModuleNotFoundError`
-  on `from mnemosyne.core.memory import Mnemosyne`. The try/except swallowed
-  this silently — tools never registered. Renamed to `hermes-mnemosyne`.
-  (Fixes #212.)
-- **Cross-session deletion of scope=global memories blocked.** `forget_working()`
-  used `WHERE id = ? AND session_id = ?`, preventing deletion of global memories
-  returned by recall() from a different session. Now uses the same pattern as
-  `invalidate()`: `WHERE id = ? AND (session_id = ? OR scope = 'global')`.
-  (Fixes #204.)
-- **`_vec_insert()` ran inside deferred transaction.** sqlite-vec virtual table
-  writes were silently lost when the transaction never committed. Now commits
-  after each `_vec_insert` call. (Contributed by **chinesewebman**.)
-- **`shutil.rmtree()` crashes on symlink targets.** Users who installed via
-  `deploy_hermes_provider.sh` have a symlink at `~/.hermes/plugins/mnemosyne/`.
-  `shutil.rmtree()` raises `Cannot call rmtree on a symbolic link`. Fixed with
-  `is_symlink()` detection and `unlink()` fallback.
-- **Directory junctions used on Windows.** Instead of symlinks (which require
-  admin), the installer now creates directory junctions. No admin required.
-- **Dead `hermes_plugin` tests breaking CI collection.** 4 test files still
-  imported from the removed `hermes_plugin/` directory, causing
-  `ModuleNotFoundError` and killing the entire test suite. Deleted:
-  `test_hermes_plugin_session.py`, `test_hermes_plugin_tools.py`,
-  `test_c13_memory_context_single_injection.py`,
-  `test_c27_provider_init_error_visible.py`. Pruned 2 MCP-routing classes
-  from `test_e6a_followup_gaps.py`.
 
-### Changed
-
-- **refactor: modular Hermes provider.** Split the 2007-line `__init__.py`
-  monolith into 5 clean modules: `tools.py` (460L — 23 tool schemas),
-  `__init__.py` (1515L — MemoryProvider), `audit.py` (138L),
-  `cli.py` (332L), `hermes_llm_adapter.py` (164L). Moved to
-  `integrations/hermes/src/mnemosyne_hermes/` following the MemoriLabs
-  pattern. Ships as standalone `mnemosyne-hermes` pip package. Removed
-  legacy `hermes_plugin/` directory, root `plugin.yaml`, and
-  `deploy_hermes_provider.sh` hack.
-- **refactor: consolidate `extensions/` and `hermes/` into `integrations/`.**
-  Single directory for all external adapters: `integrations/hermes/`,
-  `integrations/obsidian-mnemosyne/`, `integrations/vscode-mnemosyne/`.
-  Python-package integrations stay in `mnemosyne/integrations/`.
-- **Drop Python 3.9 CI support.** EOL since Nov 2025. `requires-python`
-  bumped to `>=3.10` in `pyproject.toml` and `setup.py`. MCP and OpenClaw
-  extras already gated on `>=3.10`, so this formalizes existing behavior.
-- **`MNEMOSYNE_EMBEDDING_API_URL` env var no longer falls back to
-  `OPENROUTER_BASE_URL`.** Embedding providers are independent of the
-  general routing endpoint.
-
-### Documentation
-
-- **LongMemEval 98.9% recall benchmark restored** to README alongside BEAM
-  numbers. Comparison table now shows both: `65.2% BEAM / 98.9% LongMem`.
-- **Hermes Plugin section** revamped: 23 tools in 5 categories, pip install
-  `mnemosyne-hermes` flow, `hermes tools disable memory` step, updated TOC.
-- **Standalone README** for `mnemosyne-hermes`: Memori-inspired, no em-dashes,
-  professional formatting, header image.
-- **Hermes-first positioning** in root README.
-- **Advise disabling built-in Hermes memory** when using Mnemosyne (prevents
-  double-injection and token waste).
-- **Multilingual embedding setup** documented in README with `MNEMOSYNE_EMBEDDING_MODEL`
-  env var and Language Support section.
-- **New env vars documented** in `integrations/hermes/README.md` config table:
-  `SYNC_TURN_USER_LIMIT`, `SYNC_TURN_ASSISTANT_LIMIT`, `FACT_RECALL_ENABLED`,
-  `PREFETCH_CONTENT_CHARS`.
-- **Install script link fixed** in `hermes-mcp.md`. (Contributed by
-  **Joao Fernandes**, PR #201.)
-- **UPDATING.md** updated for v3.1.2 release notes.
-
-### Tests
-
-- 26 tests for `sync_roles` config (bitr8)
-- 8 tests for sync_turn content limit env vars
-- 4 tests for fact recall integration
-- 5 tests for auto-scope-global
-- Pre-existing fact concurrency, polyphonic, and prefetch tests preserved and passing
-
-**Contributors:** Abdias J, Whishp, mia-fourier, bitr8, chinesewebman, Joao Fernandes
+## [3.1.2] — 2026-05-28
 
 ### Fixed
 
