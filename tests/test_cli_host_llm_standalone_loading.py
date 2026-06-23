@@ -7,8 +7,8 @@ fail silently. The try/except in ``mnemosyne_command()`` swallows the
 ImportError, so ``register_hermes_host_llm()`` never runs and
 ``MNEMOSYNE_HOST_LLM_ENABLED`` is silently ignored.
 
-This test loads both CLI copies the same way ``discover_plugin_cli_commands``
-does and verifies the registration path is reached.
+This test loads both CLI copies the same way ``discover_plugins``
+(in `mnemosyne/core/plugins.py`) does and verifies the registration path is reached.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ CLI_COPIES = [
 
 def _load_cli_standalone(cli_path: Path, module_name: str):
     """Load a cli.py as a standalone module via spec_from_file_location,
-    exactly like Hermes' discover_plugin_cli_commands() does.
+    exactly like Hermes' discover_plugins() (mnemosyne/core/plugins.py) does.
 
     The parent package is NOT registered in sys.modules, so relative
     imports (``from .hermes_llm_adapter import ...``) will fail.

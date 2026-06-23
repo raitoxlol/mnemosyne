@@ -7,6 +7,17 @@ and this project adheres to [SemVer](https://semver.org/) starting from v3.1.2.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Host LLM backend registration in skip-context sessions.**
+  `register_hermes_host_llm()` was called at the end of
+  `MnemosyneMemoryProvider.initialize()`, after the skip-context early
+  return. Cron, subagent, and background sessions never reached it, so
+  `mnemosyne_sleep` silently fell back to AAAK. Registration now fires
+  before the skip-context check; `shutdown()` only unregisters when the
+  session is not in a skip context. Also fixes the CLI standalone-loading
+  fallback import path for both `cli.py` copies (#368, supersedes #361).
+
 ## [3.10.0] — 2026-06-18
 
 ### Added
