@@ -18,6 +18,47 @@ and this project adheres to [SemVer](https://semver.org/) starting from v3.1.2.
   session is not in a skip context. Also fixes the CLI standalone-loading
   fallback import path for both `cli.py` copies (#368, supersedes #361).
 
+- **Respect `HERMES_HOME` for the fastembed cache default.** The default ONNX
+  model cache path now resolves to `<HERMES_HOME>/cache/fastembed` (falling back
+  to `~/.hermes/cache/fastembed` when `HERMES_HOME` is unset), instead of always
+  writing to `~/.hermes`. Keeps the cache co-located with the rest of Hermes'
+  state for users on a relocated layout (e.g. `~/.config/hermes`). No-op for
+  default installs; matches the `HERMES_HOME` handling already used elsewhere in
+  the package. `MNEMOSYNE_FASTEMBED_CACHE_DIR` still overrides.
+
+## [3.10.1] — 2026-06-22
+
+### Security
+
+- **Fix critical JWT signature verification bypass in sync server
+  ([GHSA-xcw4-53cc-hv32](https://github.com/AxDSan/mnemosyne/security/advisories/GHSA-xcw4-53cc-hv32),
+  CVSS 9.1).** The sync server's authentication check decoded JWT bearer
+  tokens but never verified their HMAC-SHA256 signatures, allowing any
+  well-formed token (including `alg: none`) to be accepted. An
+  unauthenticated attacker with network access to the sync endpoint could
+  impersonate any user, read their sync state, and push malicious sync
+  state to corrupt the local database.
+  - Replaces broken decode with a from-scratch HS256 verifier
+  - Constant-time signature comparison via `hmac.compare_digest`
+  - Strict `alg: HS256` allowlist (rejects `none`, RS256, etc.)
+  - UTC-aware `exp` validation with leeway
+  - Loud, specific error messages
+  - Reported by Denis Hache (@dplush) via private channel on 2026-06-13
+  - Patched on 2026-06-19 (commit `a0b6b871`)
+
+### Upgrade
+
+```bash
+pip install --upgrade mnemosyne-memory==3.10.1
+```
+
+If you operate a sync server with network exposure, upgrade immediately.
+If you cannot upgrade right away, restrict network access to the sync
+endpoint (firewall, reverse proxy with mTLS, or localhost bind with SSH
+tunnel). The vulnerability is not exploitable against an unreachable
+endpoint.
+>>>>>>> origin/main
+
 ## [3.10.0] — 2026-06-18
 
 ### Added
